@@ -27,18 +27,59 @@ import path_to_root  # noqa
 import dust3r.datasets.utils.cropping as cropping  # noqa
 
 
+# CATEGORIES = [
+#     "apple", "backpack", "ball", "banana", "baseballbat", "baseballglove",
+#     "bench", "bicycle", "book", "bottle", "bowl", "broccoli", "cake", "car", "carrot",
+#     "cellphone", "chair", "couch", "cup", "donut", "frisbee", "hairdryer", "handbag",
+#     "hotdog", "hydrant", "keyboard", "kite", "laptop", "microwave",
+#     "motorcycle",
+#     "mouse", "orange", "parkingmeter", "pizza", "plant", "remote", "sandwich",
+#     "skateboard", "stopsign",
+#     "suitcase", "teddybear", "toaster", "toilet", "toybus",
+#     "toyplane", "toytrain", "toytruck", "tv",
+#     "umbrella", "vase", "wineglass",
+# ]
 CATEGORIES = [
-    "apple", "backpack", "ball", "banana", "baseballbat", "baseballglove",
-    "bench", "bicycle", "book", "bottle", "bowl", "broccoli", "cake", "car", "carrot",
-    "cellphone", "chair", "couch", "cup", "donut", "frisbee", "hairdryer", "handbag",
-    "hotdog", "hydrant", "keyboard", "kite", "laptop", "microwave",
+    "apple",
+    "banana",
+    "bench",
+    "bottle",
+    "cake",
+    "donut",
+    "handbag",
+    "laptop",
+    "pizza",
+    "sandwich",
+
+    "backpack",
+    "baseballbat",
+    "bicycle",
+    "bowl",
+    "car",
+    "cellphone",
+    "couch",
+    "frisbee",
+    "hotdog",
+    "keyboard",
     "motorcycle",
-    "mouse", "orange", "parkingmeter", "pizza", "plant", "remote", "sandwich",
-    "skateboard", "stopsign",
-    "suitcase", "teddybear", "toaster", "toilet", "toybus",
-    "toyplane", "toytrain", "toytruck", "tv",
-    "umbrella", "vase", "wineglass",
+    "plant",
+    "skateboard",
+
+    "ball",
+    "baseballglove",
+    "book",
+    "broccoli",
+    "carrot",
+    "chair",
+    "cup",
+    "hairdryer",
+    "hydrant",
+    "kite",
+    "parkingmeter",
+ 
 ]
+
+
 CATEGORIES_IDX = {cat: i for i, cat in enumerate(CATEGORIES)}  # for seeding
 
 SINGLE_SEQUENCE_CATEGORIES = sorted(set(CATEGORIES) - set(["microwave", "stopsign", "tv"]))
