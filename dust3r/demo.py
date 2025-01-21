@@ -61,7 +61,38 @@ def set_print_with_timestamp(time_format="%Y-%m-%d %H:%M:%S"):
         builtin_print(*args, **kwargs)
 
     builtins.print = print_with_timestamp
+import open3d as o3d
 
+def scene_to_pcd(scene, pcd_file):
+    # Create an empty list to store all the vertices from all geometries in the scene
+    all_vertices = []
+
+    # Loop over all geometries in the scene
+    for geometry in scene.geometry.values():
+        if isinstance(geometry, trimesh.PointCloud):
+            # For PointCloud geometry, extract vertices directly
+            vertices = geometry.vertices
+            all_vertices.append(vertices)
+        elif isinstance(geometry, trimesh.Trimesh):
+            # For Mesh geometry, extract vertices
+            vertices = geometry.vertices
+            all_vertices.append(vertices)
+
+    # Combine all the vertices from all geometries in the scene into one large array
+    all_vertices = np.vstack(all_vertices)
+
+    # Create an Open3D point cloud from the vertices
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(all_vertices)
+    pcd_points = np.asarray(pcd.points)
+    np.save(pcd_file+".npy", pcd_points)
+    # origin = o3d.geometry.TriangleMesh.create_coordinate_frame(size=5, origin=[0, 0, 0])
+    o3d.visualization.draw_geometries([pcd])
+
+    # Save the point cloud to a PCD file
+    o3d.io.write_point_cloud(pcd_file, pcd)
+    
+    print(f"PCD file saved as {pcd_file}")
 
 def _convert_scene_output_to_glb(outdir, imgs, pts3d, mask, focals, cams2world, cam_size=0.05,
                                  cam_color=None, as_pointcloud=False,
@@ -71,7 +102,7 @@ def _convert_scene_output_to_glb(outdir, imgs, pts3d, mask, focals, cams2world, 
     imgs = to_numpy(imgs)
     focals = to_numpy(focals)
     cams2world = to_numpy(cams2world)
-
+    
     scene = trimesh.Scene()
 
     # full pointcloud
@@ -100,10 +131,13 @@ def _convert_scene_output_to_glb(outdir, imgs, pts3d, mask, focals, cams2world, 
     rot = np.eye(4)
     rot[:3, :3] = Rotation.from_euler('y', np.deg2rad(180)).as_matrix()
     scene.apply_transform(np.linalg.inv(cams2world[0] @ OPENGL @ rot))
+
     outfile = os.path.join(outdir, 'scene.glb')
+    pcd_outfile = os.path.join(outdir, 'scene.pcd')
     if not silent:
-        print('(exporting 3D scene to', outfile, ')')
+        print('(exporting 3D scene to (also pcd)', outfile, ')')
     scene.export(file_obj=outfile)
+    scene_to_pcd(scene, pcd_outfile )
     return outfile
 
 
@@ -152,6 +186,7 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
     output = inference(pairs, model, device, batch_size=1, verbose=not silent)
 
     mode = GlobalAlignerMode.PointCloudOptimizer if len(imgs) > 2 else GlobalAlignerMode.PairViewer
+    print("mode", mode)
     scene = global_aligner(output, device=device, mode=mode, verbose=not silent)
     lr = 0.01
 
@@ -168,8 +203,8 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
     depths = to_numpy(scene.get_depthmaps())
     confs = to_numpy([c for c in scene.im_conf])
     cmap = pl.get_cmap('jet')
-    depths_max = max([d.max() for d in depths])
-    depths = [d / depths_max for d in depths]
+    # depths_max = max([d.max() for d in depths])
+    # depths = [d / depths_max for d in depths]
     confs_max = max([d.max() for d in confs])
     confs = [cmap(d / confs_max) for d in confs]
 
@@ -180,6 +215,61 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
         imgs.append(rgb(confs[i]))
 
     return scene, outfile, imgs
+
+
+def get_reconstructed_scene_with_known_poses(outdir, model, device, silent, image_size, filelist, schedule, niter, min_conf_thr,
+                            as_pointcloud, mask_sky, clean_depth, transparent_cams, cam_size,
+                            scenegraph_type, winsize, refid, known_poses):
+    """
+    from a list of images, run dust3r inference, global aligner.
+    then run get_3D_model_from_scene
+    """
+    imgs = load_images(filelist, size=image_size, verbose=not silent)
+    print("Length of images", len(imgs))
+    if len(imgs) == 1:
+        imgs = [imgs[0], copy.deepcopy(imgs[0])]
+        imgs[1]['idx'] = 1
+    if scenegraph_type == "swin":
+        scenegraph_type = scenegraph_type + "-" + str(winsize)
+    elif scenegraph_type == "oneref":
+        scenegraph_type = scenegraph_type + "-" + str(refid)
+
+    pairs = make_pairs(imgs, scene_graph=scenegraph_type, prefilter=None, symmetrize=True)
+    output = inference(pairs, model, device, batch_size=1, verbose=not silent)
+
+    mode = GlobalAlignerMode.PointCloudOptimizer if len(imgs) > 2 else GlobalAlignerMode.PairViewer
+    print("mode", mode)
+    scene = global_aligner(output, device=device, mode=mode, verbose=not silent)
+    scene.preset_pose(known_poses)
+    scene.se
+    lr = 0.01
+
+    if mode == GlobalAlignerMode.PointCloudOptimizer:
+        loss = scene.compute_global_alignment(init='known_poses', niter=niter, schedule=schedule, lr=lr)
+
+    outfile = get_3D_model_from_scene(outdir, silent, scene, min_conf_thr, as_pointcloud, mask_sky,
+                                      clean_depth, transparent_cams, cam_size)
+
+    # also return rgb, depth and confidence imgs
+    # depth is normalized with the max value for all images
+    # we apply the jet colormap on the confidence maps
+    rgbimg = scene.imgs
+    depths = to_numpy(scene.get_depthmaps())
+    confs = to_numpy([c for c in scene.im_conf])
+    cmap = pl.get_cmap('jet')
+    # depths_max = max([d.max() for d in depths])
+    # depths = [d / depths_max for d in depths]
+    confs_max = max([d.max() for d in confs])
+    confs = [cmap(d / confs_max) for d in confs]
+
+    imgs = []
+    for i in range(len(rgbimg)):
+        imgs.append(rgbimg[i])
+        imgs.append(rgb(depths[i]))
+        imgs.append(rgb(confs[i]))
+
+    return scene, outfile, imgs
+
 
 
 def set_scenegraph_options(inputfiles, winsize, refid, scenegraph_type):

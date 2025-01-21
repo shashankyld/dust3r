@@ -1,0 +1,17 @@
+model: FisheyeRadTanThinPrism
+parameters:
+  fx: <focal_length_x>  # Example: 1000.0
+  fy: <focal_length_y>  # Example: 1000.0
+  cx: <principal_point_x>  # Example: 640.0
+  cy: <principal_point_y>  # Example: 480.0
+  k1: <radial_distortion_1>  # Example: -0.2
+  k2: <radial_distortion_2>  # Example: 0.03
+  k3: <radial_distortion_3>  # Example: -0.0001
+  k4: <radial_distortion_4>  # Example: 0.00001
+  s0: <thin_prism_1>  # Example: 0.00005
+  s1: <thin_prism_2>  # Example: -0.00003
+  s2: <thin_prism_3>  # Example: 0.00002
+  s3: <thin_prism_4>  # Example: -0.00001
+image_size:
+  width: <image_width>  # Example: 1280
+  height: <image_height>  # Example: 720
