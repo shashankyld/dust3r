@@ -23,7 +23,8 @@ from dust3r.utils.image import load_images, rgb
 from dust3r.utils.device import to_numpy
 from dust3r.viz import add_scene_cam, CAM_COLORS, OPENGL, pts3d_to_trimesh, cat_meshes
 from dust3r.cloud_opt import global_aligner, GlobalAlignerMode
-
+import logging
+logging.basicConfig(level=logging.DEBUG)
 import matplotlib.pyplot as pl
 
 
@@ -219,13 +220,13 @@ def get_reconstructed_scene(outdir, model, device, silent, image_size, filelist,
 
 def get_reconstructed_scene_with_known_poses(outdir, model, device, silent, image_size, filelist, schedule, niter, min_conf_thr,
                             as_pointcloud, mask_sky, clean_depth, transparent_cams, cam_size,
-                            scenegraph_type, winsize, refid, known_poses):
+                            scenegraph_type, winsize, refid, known_poses, known_focals):
     """
     from a list of images, run dust3r inference, global aligner.
     then run get_3D_model_from_scene
     """
     imgs = load_images(filelist, size=image_size, verbose=not silent)
-    print("Length of images", len(imgs))
+    print("Length of images in the input", len(imgs))
     if len(imgs) == 1:
         imgs = [imgs[0], copy.deepcopy(imgs[0])]
         imgs[1]['idx'] = 1
@@ -241,7 +242,7 @@ def get_reconstructed_scene_with_known_poses(outdir, model, device, silent, imag
     print("mode", mode)
     scene = global_aligner(output, device=device, mode=mode, verbose=not silent)
     scene.preset_pose(known_poses)
-    scene.se
+    scene.preset_focal(known_focals)
     lr = 0.01
 
     if mode == GlobalAlignerMode.PointCloudOptimizer:
@@ -267,6 +268,7 @@ def get_reconstructed_scene_with_known_poses(outdir, model, device, silent, imag
         imgs.append(rgbimg[i])
         imgs.append(rgb(depths[i]))
         imgs.append(rgb(confs[i]))
+    logging.info(f"Length of images in the output {len(imgs)}")  
 
     return scene, outfile, imgs
 

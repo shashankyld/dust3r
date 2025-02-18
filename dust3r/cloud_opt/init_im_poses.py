@@ -293,6 +293,7 @@ def get_known_poses(self):
         known_poses = self.get_im_poses()
         return known_poses_msk.sum(), known_poses_msk, known_poses
     else:
+        print('No known poses')
         return 0, None, None
 
 

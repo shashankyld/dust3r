@@ -69,6 +69,7 @@ class PointCloudOptimizer(BasePCOptimizer):
         if isinstance(known_poses, torch.Tensor) and known_poses.ndim == 2:
             known_poses = [known_poses]
         for idx, pose in zip(self._get_msk_indices(pose_msk), known_poses):
+
             if self.verbose:
                 print(f' (setting pose #{idx} = {pose[:3,3]})')
             self._no_grad(self._set_pose(self.im_poses, idx, torch.tensor(pose)))

@@ -111,6 +111,7 @@ class AsymmetricCroCo3DStereo (
 
     def set_downstream_head(self, output_mode, head_type, landscape_only, depth_mode, conf_mode, patch_size, img_size,
                             **kw):
+        print("Calling set_downstream_head")
         assert img_size[0] % patch_size == 0 and img_size[1] % patch_size == 0, \
             f'{img_size=} must be multiple of {patch_size=}'
         self.output_mode = output_mode
@@ -125,6 +126,7 @@ class AsymmetricCroCo3DStereo (
         self.head2 = transpose_to_landscape(self.downstream_head2, activate=landscape_only)
 
     def _encode_image(self, image, true_shape):
+        print("Calling _encode_image")
         # embed the image into patches  (x has size B x Npatches x C)
         x, pos = self.patch_embed(image, true_shape=true_shape)
 
@@ -139,6 +141,7 @@ class AsymmetricCroCo3DStereo (
         return x, pos, None
 
     def _encode_image_pairs(self, img1, img2, true_shape1, true_shape2):
+        print("Calling _encode_image_pairs")
         if img1.shape[-2:] == img2.shape[-2:]:
             out, pos, _ = self._encode_image(torch.cat((img1, img2), dim=0),
                                              torch.cat((true_shape1, true_shape2), dim=0))
@@ -150,6 +153,7 @@ class AsymmetricCroCo3DStereo (
         return out, out2, pos, pos2
 
     def _encode_symmetrized(self, view1, view2):
+        print("Calling _encode_symmetrized")
         img1 = view1['img']
         img2 = view2['img']
         B = img1.shape[0]
@@ -160,7 +164,7 @@ class AsymmetricCroCo3DStereo (
 
         if is_symmetrized(view1, view2):
             # computing half of forward pass!'
-            feat1, feat2, pos1, pos2 = self._encode_image_pairs(img1[::2], img2[::2], shape1[::2], shape2[::2])
+            feat1, feat2, pos1, pos2 = self._encode_image_pairs(img1[::2], img2[::2], shape1[::2], shape2[::2]) 
             feat1, feat2 = interleave(feat1, feat2)
             pos1, pos2 = interleave(pos1, pos2)
         else:
@@ -169,6 +173,7 @@ class AsymmetricCroCo3DStereo (
         return (shape1, shape2), (feat1, feat2), (pos1, pos2)
 
     def _decoder(self, f1, pos1, f2, pos2):
+        print("Calling _decoder")
         final_output = [(f1, f2)]  # before projection
 
         # project to decoder dim
@@ -190,12 +195,14 @@ class AsymmetricCroCo3DStereo (
         return zip(*final_output)
 
     def _downstream_head(self, head_num, decout, img_shape):
+        print("Calling _downstream_head")
         B, S, D = decout[-1].shape
         # img_shape = tuple(map(int, img_shape))
-        head = getattr(self, f'head{head_num}')
+        head = getattr(self, f'head{head_num}') 
         return head(decout, img_shape)
 
     def forward(self, view1, view2):
+        print("Calling forward")
         # encode the two images --> B,S,D
         (shape1, shape2), (feat1, feat2), (pos1, pos2) = self._encode_symmetrized(view1, view2)
 
