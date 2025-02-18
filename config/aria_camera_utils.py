@@ -47,97 +47,105 @@ def get_fisheye624_params(camera_name):
     
     return aria_fisheye_intrinsics
 
-def estimate_r_theta_phi(u, v, fx, fy, cx, cy, p0, p1, s0, s1, s2, s3, num_iterations=100):
+def estimate_r_theta_phi(u_src, v_src, fx, fy, cx, cy, p0, p1, s0, s1, s2, s3, device, num_iterations=50):
     """Estimate r_theta and phi using optimization."""
-    # Initial estimates assuming undistorted image
-    u_norm = (u - cx) / fx
-    v_norm = (v - cy) / fy
-    
-    # Initialize phi and r_theta
-    phi_init = torch.atan2(v_norm, u_norm)
-    r_theta_init = torch.sqrt(u_norm**2 + v_norm**2)
-    
-    # Create parameters for optimization
-    phi = torch.nn.Parameter(phi_init)
-    r_theta = torch.nn.Parameter(r_theta_init)
-    
-    optimizer = Adam([phi, r_theta], lr=0.01)
-    
-    for _ in range(num_iterations):
-        optimizer.zero_grad()
+    with torch.enable_grad():
+        # Convert all inputs to tensors on device and enable gradients
+        u = u_src.clone().detach().requires_grad_(True)
+        v = v_src.clone().detach().requires_grad_(True)
         
-        # Compute predicted u, v using the current estimates
-        cos_phi = torch.cos(phi)
-        sin_phi = torch.sin(phi)
-        r_theta_sq = r_theta**2
+        # Initialize parameters based on pinhole model
+        u_norm = (u - cx) / fx
+        v_norm = (v - cy) / fy
         
-        u_pred = fx * (r_theta * cos_phi + 
-                      (2*p0*r_theta_sq*cos_phi**2 + p0*r_theta_sq + 2*p1*r_theta_sq*sin_phi*cos_phi) +
-                      (s0*r_theta_sq + s1*r_theta_sq**2)) + cx
+        # Initial estimates based on pinhole model
+        phi = torch.atan2(v_norm, u_norm)
+        r_theta = torch.sqrt(u_norm**2 + v_norm**2)
         
-        v_pred = fy * (r_theta * sin_phi +
-                      (2*p1*r_theta_sq*sin_phi**2 + p1*r_theta_sq + 2*p0*r_theta_sq*sin_phi*cos_phi) +
-                      (s2*r_theta_sq + s3*r_theta_sq**2)) + cy
+        # Convert to parameters
+        phi = torch.nn.Parameter(phi)
+        r_theta = torch.nn.Parameter(r_theta)
         
-        # Compute loss
-        loss = (u_pred - u)**2 + (v_pred - v)**2
-        loss.backward()
-        optimizer.step()
-    
-    return r_theta.detach(), phi.detach()
-
-def estimate_theta(r_theta, k_params):
-    """Estimate theta from r_theta using Newton's method."""
-    theta = r_theta  # Initial guess
-    
-    for _ in range(50):  # Max iterations
-        f_theta = theta
-        df_theta = 1.0
+        # Setup optimizer
+        optimizer = Adam([phi, r_theta], lr=0.01)
         
-        for i, k in enumerate(k_params):
-            power = 2*i + 3
-            f_theta += k * theta**power    
-            df_theta += k * power * theta**(power-1)
+        # Target coordinates
+        u_target = u.clone().detach()
+        v_target = v.clone().detach()
         
-        f_theta -= r_theta        
-        if abs(f_theta) < 1e-6:
-            break
+        for iter_idx in range(num_iterations):
+            optimizer.zero_grad()
             
-        theta = theta - f_theta/df_theta
+            # Forward computation
+            cos_phi = torch.cos(phi)
+            sin_phi = torch.sin(phi)
+            r_theta_sq = r_theta**2
+            
+            # Predict coordinates using fisheye model
+            u_pred = fx * (r_theta * cos_phi + 
+                       (2*p0*r_theta_sq*cos_phi**2 + p0*r_theta_sq + 2*p1*r_theta_sq*sin_phi*cos_phi) +
+                       (s0*r_theta_sq + s1*r_theta_sq**2)) + cx
+            
+            v_pred = fy * (r_theta * sin_phi +
+                       (2*p1*r_theta_sq*sin_phi**2 + p1*r_theta_sq + 2*p0*r_theta_sq*sin_phi*cos_phi) +
+                       (s2*r_theta_sq + s3*r_theta_sq**2)) + cy
+            
+            # Compute loss
+            loss = ((u_pred - u_target)**2 + (v_pred - v_target)**2).mean()
+            
+            if iter_idx % 10 == 0:
+                print(f"Iteration {iter_idx}, Loss: {loss.item():.6f}")
+            
+            # Backward pass
+            loss.backward()
+            optimizer.step()
+        
+        return r_theta.detach(), phi.detach()
+
+def estimate_theta(r_theta, k_params, device, num_iterations=50):
+    """Estimate theta from r_theta using PyTorch optimization."""
+    with torch.enable_grad():
+        # Initialize theta as a parameter
+        theta = torch.nn.Parameter(r_theta.clone().detach())
+        optimizer = Adam([theta], lr=0.01)
+        
+        for _ in range(num_iterations):
+            optimizer.zero_grad()
+            
+            # Forward computation: r_theta = theta + k1*theta^3 + k2*theta^5 + ...
+            r_theta_pred = theta.clone()
+            for i, k in enumerate(k_params):
+                power = 2*i + 3
+                r_theta_pred = r_theta_pred + k * theta**power
+            
+            # Loss is the difference between predicted and target r_theta
+            loss = ((r_theta_pred - r_theta)**2).mean()
+            
+            # Backward pass
+            loss.backward()
+            optimizer.step()
     
-    return theta
+    return theta.detach()
 
 def undistort_fisheye624(image, camera_name, destination_params, batch_size=1024, device="cuda"):
-    """
-    Undistort fisheye image to pinhole projection using GPU batching.
-    
-    Args:
-        image: Input fisheye image
-        camera_name: Name of the camera from config
-        destination_params: Dictionary containing:
-            - focal_length: [fx, fy]
-            - principal_point: [cx, cy]
-            - image_size: [width, height]
-        batch_size: Number of pixels to process in parallel
-        device: Device to use for computation ("cuda" or "cpu")
-    """
+    """Undistort fisheye image using optimization to find the mapping."""
     # Get fisheye parameters
     fisheye_params = get_fisheye624_params(camera_name)
     
     # Create tensors for input image coordinates
-    height, width = image.shape[:2]
+    src_height, src_width = image.shape[:2]
     dest_height, dest_width = destination_params['image_size']
-    total_pixels = dest_height * dest_width
     
-    # Create output image
+    # Create output image (initialized to black)
     undistorted = np.zeros((dest_height, dest_width, image.shape[2]), dtype=image.dtype)
     
-    # Convert parameters to torch tensors on GPU
+    # Get camera parameters
     fx = torch.tensor(fisheye_params['fx'], dtype=torch.float32, device=device)
     fy = torch.tensor(fisheye_params['fy'], dtype=torch.float32, device=device)
     cx = torch.tensor(fisheye_params['cx'], dtype=torch.float32, device=device)
     cy = torch.tensor(fisheye_params['cy'], dtype=torch.float32, device=device)
     
+    # Get distortion parameters
     k_params = torch.tensor([fisheye_params[f'k{i}'] for i in range(6)], dtype=torch.float32, device=device)
     p0 = torch.tensor(fisheye_params['p0'], dtype=torch.float32, device=device)
     p1 = torch.tensor(fisheye_params['p1'], dtype=torch.float32, device=device)
@@ -146,73 +154,97 @@ def undistort_fisheye624(image, camera_name, destination_params, batch_size=1024
     # Destination camera parameters
     fx_dest, fy_dest = destination_params['focal_length']
     cx_dest, cy_dest = destination_params['principal_point']
+
+    # Debug prints
+    print("Source image shape:", image.shape)
+    print("Destination image shape:", (dest_height, dest_width))
+    print("Camera parameters:", fisheye_params)
+    print("Destination parameters:", destination_params)
     
-    # Create mesh grid of destination coordinates
-    y_coords, x_coords = torch.meshgrid(
-        torch.arange(dest_height, device=device), 
-        torch.arange(dest_width, device=device),
-        indexing='ij'  # Add indexing parameter
+    # Create source pixel coordinates (we'll map FROM source TO destination)
+    y_src, x_src = torch.meshgrid(
+        torch.arange(src_height, device=device),
+        torch.arange(src_width, device=device),
+        indexing='ij'
     )
-    pixels = torch.stack([x_coords.flatten(), y_coords.flatten()], dim=1)
-    
-    # Convert image to torch tensor
-    image_tensor = torch.from_numpy(image).to(device)
+    source_pixels = torch.stack([x_src.flatten(), y_src.flatten()], dim=1)
+    total_pixels = src_height * src_width
     
     # Process in batches
     num_batches = (total_pixels + batch_size - 1) // batch_size
     
     with torch.no_grad():
-        for batch_idx in tqdm(range(num_batches), desc="Undistorting image"):
+        for batch_idx in tqdm(range(num_batches), desc="Processing source pixels"):
+            print(f"\nProcessing batch {batch_idx}")
             start_idx = batch_idx * batch_size
             end_idx = min((batch_idx + 1) * batch_size, total_pixels)
             
-            batch_pixels = pixels[start_idx:end_idx]
+            batch_pixels = source_pixels[start_idx:end_idx]
             
-            # Get normalized coordinates in pinhole camera
-            x_norm = (batch_pixels[:, 0] - cx_dest) / fx_dest
-            y_norm = (batch_pixels[:, 1] - cy_dest) / fy_dest
+            # Convert coordinates to tensors and move to device
+            u_src = batch_pixels[:, 0].float().to(device)
+            v_src = batch_pixels[:, 1].float().to(device)
             
-            # Convert to polar coordinates - Fix tensor type error
-            denominator = torch.ones_like(x_norm, device=device)  # Create tensor of ones with same shape
-            theta = torch.atan2(torch.sqrt(x_norm**2 + y_norm**2), denominator)
-            phi = torch.atan2(y_norm, x_norm)
-            
-            # Convert to fisheye coordinates using the forward model
-            r_theta = theta.clone()
-            for i, k in enumerate(k_params):
-                r_theta = r_theta + k * theta**(2*i + 3)
-            
-            cos_phi = torch.cos(phi)
-            sin_phi = torch.sin(phi)
-            r_theta_sq = r_theta**2
-            
-            # Calculate fisheye pixel coordinates
-            u = fx * (r_theta * cos_phi + 
-                     (2*p0*r_theta_sq*cos_phi**2 + p0*r_theta_sq + 2*p1*r_theta_sq*sin_phi*cos_phi) +
-                     (s0*r_theta_sq + s1*r_theta_sq**2)) + cx
-            
-            v = fy * (r_theta * sin_phi +
-                     (2*p1*r_theta_sq*sin_phi**2 + p1*r_theta_sq + 2*p0*r_theta_sq*sin_phi*cos_phi) +
-                     (s2*r_theta_sq + s3*r_theta_sq**2)) + cy
-            
-            # Grid sample for efficient bilinear interpolation
-            u_normalized = (u / (width - 1)) * 2 - 1
-            v_normalized = (v / (height - 1)) * 2 - 1
-            grid = torch.stack([u_normalized, v_normalized], dim=1).view(1, -1, 1, 2)
-            
-            # Sample from image using grid_sample
-            sampled = torch.nn.functional.grid_sample(
-                image_tensor.permute(2, 0, 1).unsqueeze(0).float(), 
-                grid,
-                mode='bilinear',
-                padding_mode='border',
-                align_corners=True
-            )
-            
-            # Update output image - Fix CUDA to numpy conversion
-            y_idx = batch_pixels[:, 1].cpu().numpy().astype(int)
-            x_idx = batch_pixels[:, 0].cpu().numpy().astype(int)
-            undistorted[y_idx, x_idx] = sampled.squeeze().permute(1, 0).cpu().numpy()
+            try:
+                print(f"Input shapes:")
+                print(f"u_src: {u_src.shape}, v_src: {v_src.shape}")
+                
+                # Estimate r_theta and phi using optimization
+                r_theta, phi = estimate_r_theta_phi(
+                    u_src, v_src, fx, fy, cx, cy,
+                    p0, p1, s0, s1, s2, s3,
+                    device=device,
+                    num_iterations=50
+                )
+                
+                if r_theta is None or phi is None:
+                    print(f"Skipping batch {batch_idx} due to optimization failure")
+                    continue
+                
+                # Estimate theta from r_theta using optimization
+                theta = estimate_theta(r_theta, k_params, device)
+                
+                # Convert to 3D coordinates
+                x = torch.sin(theta) * torch.cos(phi)
+                y = torch.sin(theta) * torch.sin(phi)
+                z = torch.cos(theta)
+                
+                # Project to destination (pinhole) image plane
+                z = torch.clamp(z, min=1e-6)  # Prevent division by zero
+                x_norm = x / z
+                y_norm = y / z
+                
+                u_dest = (fx_dest * x_norm + cx_dest).round().long()
+                v_dest = (fy_dest * y_norm + cy_dest).round().long()
+                
+                # Check which destination coordinates are valid
+                valid_mask = (u_dest >= 0) & (u_dest < dest_width) & \
+                           (v_dest >= 0) & (v_dest < dest_height) & \
+                           (z > 0)  # Only keep points in front of the camera
+                
+                # Get valid pixels
+                u_src_valid = u_src[valid_mask].cpu().numpy().astype(int)
+                v_src_valid = v_src[valid_mask].cpu().numpy().astype(int)
+                u_dest_valid = u_dest[valid_mask].cpu().numpy()
+                v_dest_valid = v_dest[valid_mask].cpu().numpy()
+                
+                # Debug first batch
+                if batch_idx == 0:
+                    print("First batch stats:")
+                    print("Valid pixels:", len(valid_mask.nonzero()))
+                    print("r_theta range:", r_theta.min().item(), r_theta.max().item())
+                    print("theta range:", theta.min().item(), theta.max().item())
+                    print("z range:", z.min().item(), z.max().item())
+                    print("Source coords:", u_src_valid[:5], v_src_valid[:5])
+                    print("Dest coords:", u_dest_valid[:5], v_dest_valid[:5])
+                
+                # Copy pixels from source to destination
+                if len(valid_mask.nonzero()) > 0:
+                    undistorted[v_dest_valid, u_dest_valid] = image[v_src_valid, u_src_valid]
+                
+            except Exception as e:
+                print(f"Error in batch {batch_idx}:", str(e))
+                continue
     
     return undistorted
 
@@ -261,26 +293,49 @@ if __name__ == "__main__":
     
     """
     # Test the undistortion
-    image = cv2.imread("/home/shashank/Documents/UniBonn/Sem5/aria-stereo-depth-completion/other_projects/dust3r/config/distorted_example_kb6.png")
-    destination_height = 880
-    destination_width = 840
+    path = "/home/shashank/Documents/UniBonn/Sem5/aria-stereo-depth-completion/other_projects/dust3r/logs/test2/rgb_image.png"
+    image = cv2.imread(path)
+    destination_height = 512 
+    destination_width = 512
 
+    # Adjust destination parameters to avoid border artifacts
+    image_height, image_width = image.shape[:2]
+    print("Height and width of the original image: ", image_height, image_width)
+    scale_factor = 1  # Reduce output size to avoid edge artifacts
+    
     destination_params = {
-        'focal_length': [140, 140],
+        'focal_length': [280, 280],  # Use source focal length for better results
         'principal_point': [destination_width // 2, destination_height // 2],
-        'image_size': [destination_width, destination_height]
+        'image_size': [destination_height, destination_width]
     }
     
+    print(f"Destination parameters: {destination_params}")
     # Check if CUDA is available
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
+    # camera-slam-left, camera-slam-right, camera-rgb
     
-    undistorted = undistort_fisheye624(image, "camera-slam-left", destination_params, 
-                                      batch_size=4096, device=device)
+    undistorted = undistort_fisheye624(image, "camera-rgb", destination_params, 
+                                      batch_size=16384, device=device)
+
+    # ## FOR THE BLACK PIXEL, INTERPOLATE THE PIXEL VALUE FROM THE NEAREST PIXELS 
+    # black_pixel = np.where(undistorted == 0)
+    # for i in range(len(black_pixel[0])):
+    #     u = black_pixel[1][i]
+    #     v = black_pixel[0][i]
+    #     if u == 0 or v == 0 or u == destination_width-1 or v == destination_height-1:
+    #         continue
+    #     undistorted[v, u] = (undistorted[v-1, u] + undistorted[v+1, u] + undistorted[v, u-1] + undistorted[v, u+1])/4
+
+
 
 
     cv2.imshow("Original", image)
     cv2.imshow("Undistorted", undistorted)
+
+    # SAVE THE UNDISTORTED IMAGE _ USE NAME FROM THE IMAGE FILE
+    name_tag = path.split("/")[-1].split(".")[0]
+    cv2.imwrite(f"/home/shashank/Documents/UniBonn/Sem5/aria-stereo-depth-completion/other_projects/dust3r/logs/test2/backward_final_undistorted_{name_tag}.png", undistorted)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 

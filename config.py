@@ -203,8 +203,21 @@ camera_calibrations = {
     }
 }
 
+# Add destination parameters for each camera
 destination_params = {
-    "focal_length": [165, 165],
-    "principal_point": [0, 0],
-    "image_size": [480, 640]
+    "camera-rgb": {
+        'focal_length': [280, 280],
+        'principal_point': [256,256],  # Center of destination image
+        'image_size': [512, 512]  # Match original dimensions
+    },
+    "camera-slam-left": {
+        'focal_length': [241.092, 241.092],  # Match source focal length
+        'principal_point': [320, 240],  # Center of destination image
+        'image_size': [640, 480]  # Standard dimensions
+    },
+    "camera-slam-right": {
+        'focal_length': [241.092, 241.092],  # Match source focal length
+        'principal_point': [320, 240],  # Center of destination image
+        'image_size': [640, 480]  # Standard dimensions
+    }
 }
