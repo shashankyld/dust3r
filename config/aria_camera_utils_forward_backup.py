@@ -11,7 +11,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import camera_calibrations
 
-camera_name = "camera-slam-right"
+camera_name = "camera-slam-left"
 aria_fisheye_intrinsics_kb6 = {
     }
 
@@ -29,8 +29,8 @@ def get_fisheye624_params(camera_name):
     aria_fisheye_intrinsics = {
         'fx': params[0],
         'fy': params[0],  # fx = fy for Aria cameras
-        'cy': params[1],
-        'cx': params[2],
+        'cx': params[1],
+        'cy': params[2],
         'k0': params[3],
         'k1': params[4],
         'k2': params[5],
@@ -129,14 +129,12 @@ def undistort_fisheye624(image, camera_name, destination_params, batch_size=1024
     dest_height, dest_width = destination_params['image_size']
     total_pixels = dest_height * dest_width
 
-
     print("Shape of the original image: ", image.shape)
     
     # Create output image
     undistorted = np.zeros((dest_height, dest_width, image.shape[2]), dtype=image.dtype)
 
     print("Shape of the undistorted image: ", undistorted.shape)
-    
     
     # Convert parameters to torch tensors on GPU
     fx = torch.tensor(fisheye_params['fx'], dtype=torch.float32, device=device)
@@ -152,12 +150,6 @@ def undistort_fisheye624(image, camera_name, destination_params, batch_size=1024
     # Destination camera parameters
     fx_dest, fy_dest = destination_params['focal_length']
     cx_dest, cy_dest = destination_params['principal_point']
-
-    print("Source parameters: ", fx, fy, cx, cy, k_params, p0, p1, s0, s1, s2, s3)
-    print("Destination parameters: ", fx_dest, fy_dest, cx_dest, cy_dest)
-
-    if True: 
-        return undistorted
     
     # Adjust focal lengths to account for fisheye FOV
     # Fisheye cameras typically have ~180-degree FOV, while pinhole projection works best with narrower FOV
@@ -313,25 +305,22 @@ if __name__ == "__main__":
     
     """
     # Test the undistortion
+    # path = "/home/shashank/Documents/UniBonn/Sem5/aria-stereo-depth-completion/other_projects/dust3r/logs/test2/rgb_image.png"
     path = "/home/shashank/Documents/UniBonn/Sem5/aria-stereo-depth-completion/other_projects/dust3r/logs/test1/slam_right_image.png"
     image = cv2.imread(path)
-    
+    # destination_height = 512
+    # destination_width = 512
 
-
-    destination_height = 640*2
-    destination_width = 480*2
+    destination_height = 640
+    destination_width = 480
 
     # Adjust destination parameters to avoid border artifacts
     image_height, image_width = image.shape[:2]
     print("Height and width of the original image: ", image_height, image_width)
     scale_factor = 1  # Reduce output size to avoid edge artifacts
     
-    source_params = get_fisheye624_params("camera-slam-left")
-    print(f"Source parameters: {source_params}")
-
-    # SETTING SAME FOCAL LENGTH AS THE SOURCE IMAGE FOR SIMPLE MATH
     destination_params = {
-        'focal_length': [source_params['fx'], source_params['fy']],
+        'focal_length': [240, 240],  # Use larger focal length initially
         'principal_point': [destination_width // 2, destination_height // 2],
         'image_size': [
             int(destination_height * scale_factor),
@@ -348,29 +337,9 @@ if __name__ == "__main__":
                                       batch_size=4096, device=device)
 
 
-    
-    # Convert principal points to integers for OpenCV
-    source_cx = int(round(source_params['cx']))
-    source_cy = int(round(source_params['cy']))
-    dest_cx = int(round(destination_params['principal_point'][0]))
-    dest_cy = int(round(destination_params['principal_point'][1]))
-    
-    # Draw circles at principal points
-    cv2.circle(image, (source_cx, source_cy), 5, (0, 255, 0), -1)
-    cv2.circle(undistorted, (dest_cx, dest_cy), 5, (0, 255, 0), -1)
-    
-    # Add some visual guides
-    # Draw horizontal and vertical lines through principal points
-    cv2.line(image, (0, source_cy), (image_width, source_cy), (0, 255, 0), 1)
-    cv2.line(image, (source_cx, 0), (source_cx, image_height), (0, 255, 0), 1)
-    
-    cv2.line(undistorted, (0, dest_cy), (destination_width, dest_cy), (0, 255, 0), 1)
-    cv2.line(undistorted, (dest_cx, 0), (dest_cx, destination_height), (0, 255, 0), 1)
-    
-    # Rest of the display code
     cv2.imshow("Original", image)
     cv2.imshow("Undistorted", undistorted)
-    
+
     # SAVE THE UNDISTORTED IMAGE _ USE NAME FROM THE IMAGE FILE - include logs/*/*
     name_tag = path.split("/")[-1].split(".")[0]
     # cv2.imwrite(f"/home/shashank/Documents/UniBonn/Sem5/aria-stereo-depth-completion/other_projects/dust3r/logs/test2/undistorted_{name_tag}.png", undistorted)

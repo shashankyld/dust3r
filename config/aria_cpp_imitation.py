@@ -13,28 +13,28 @@ def get_fisheye624_params(camera_name):
     """Get fisheye624 parameters from config for a specific camera."""
     if camera_name not in camera_calibrations:
         raise ValueError(f"Camera {camera_name} not found in calibrations")
-
+        
     camera = camera_calibrations[camera_name]
     params = camera['projection_params']
     
-    # The order of fish624 parameters is (fx = fy), cx, cy, k0, k1, k2, k3, k4, k5, p0, p1, s0, s1, s2, s3
+    # Get individual parameters correctly
     aria_fisheye_intrinsics = {
-        'fx': params,
-        'fy': params,  # fx = fy for Aria cameras
-        'cx': params,
-        'cy': params,
-        'k0': params,
-        'k1': params,
-        'k2': params,
-        'k3': params,
-        'k4': params,
-        'k5': params,
-        'p0': params,
-        'p1': params,
-        's0': params,
-        's1': params,
-        's2': params,
-        's3': params
+        'fx': params[0],  # Single value
+        'fy': params[0],  # fx = fy for Aria cameras
+        'cx': params[1],
+        'cy': params[2],
+        'k0': params[3],
+        'k1': params[4],
+        'k2': params[5],
+        'k3': params[6],
+        'k4': params[7],
+        'k5': params[8],
+        'p0': params[9],
+        'p1': params[10],
+        's0': params[11],
+        's1': params[12],
+        's2': params[13],
+        's3': params[14]
     }
     
     return aria_fisheye_intrinsics
@@ -47,53 +47,47 @@ def fisheye_rad_tan_thin_prism_project(point_optical, params):
     fu, fv, cu, cv, k0, k1, k2, k3, k4, k5, p0, p1, s0, s1, s2, s3 = params
 
     # Make sure the point is not on the image plane
-    if point_optical == 0:
-        raise ValueError("Point cannot be on the image plane (z = 0)")
+    if point_optical[2] == 0:
+        return None, None
 
-    # Compute [a; b] = [x/z; y/z]
-    inv_z = 1.0 / point_optical
-    ab = point_optical[:2] * inv_z
-
-    # Compute the squares of the elements of ab
-    ab_squared = ab**2
-
-    # These will be used in multiple computations
-    r_sq = ab_squared + ab_squared
-    r = np.sqrt(r_sq)
-    th = np.arctan(r)
-    theta_sq = th**2
-
-    # Compute the theta polynomial
-    th_radial = 1.0
-    theta2is = theta_sq
-    for i, k in enumerate([k0, k1, k2, k3, k4, k5]):  # Assuming fisheye624
-        th_radial += theta2is * k
-        theta2is *= theta_sq
-
-    # Compute th/r, using the limit for small values
-    th_divr = 1.0 if r < np.finfo(float).eps else th / r
-
-    # The distorted coordinates -- except for focal length and principal point
-    # Start with the radial term:
-    xr_yr = (th_radial * th_divr) * ab
-    xr_yr_squared_norm = np.sum(xr_yr**2)
-
-    # Start computing the output: first the radially-distorted terms,
-    # then add more as needed
-    uv_distorted = xr_yr.copy()
-
-    # Add tangential distortion
-    temp = 2 * np.dot(xr_yr, [p0, p1])
-    uv_distorted += temp * xr_yr + xr_yr_squared_norm * np.array([p0, p1])
-
-    # Add thin prism distortion
-    radial_powers_2_and_4 = np.array([xr_yr_squared_norm, xr_yr_squared_norm**2])
-    uv_distorted += np.dot([s0, s1], radial_powers_2_and_4)
-    uv_distorted += np.dot([s2, s3], radial_powers_2_and_4)
-
-    # Compute the return value
-    return fu * uv_distorted + [cu, cv]  # Assuming single focal length
-
+    # Normalize coordinates
+    x, y = point_optical[:2] / point_optical[2]
+    
+    # Convert to polar coordinates
+    r = np.sqrt(x*x + y*y)
+    if r < 1e-8:
+        return cu, cv
+    
+    # Calculate theta (angle from optical axis)
+    theta = np.arctan(r)
+    theta2 = theta * theta
+    
+    # Apply distortion model
+    theta_d = theta * (1.0 + k0*theta2 + k1*theta2*theta2 + k2*theta2*theta2*theta2)
+    
+    # Scale factor
+    scale = theta_d / r
+    
+    # Apply scaled coordinates
+    xp = x * scale
+    yp = y * scale
+    
+    # Apply tangential and thin prism distortion
+    r2 = xp*xp + yp*yp
+    
+    # Tangential distortion
+    tdx = p0 * (2*xp*xp + r2) + 2*p1*xp*yp
+    tdy = p1 * (2*yp*yp + r2) + 2*p0*xp*yp
+    
+    # Thin prism distortion
+    tpx = s0*r2 + s1*r2*r2
+    tpy = s2*r2 + s3*r2*r2
+    
+    # Final projected coordinates
+    u = fu * (xp + tdx + tpx) + cu
+    v = fv * (yp + tdy + tpy) + cv
+    
+    return u, v
 
 def fisheye_rad_tan_thin_prism_unproject(p, params):
     """
@@ -214,53 +208,61 @@ def getThetaFromNorm_xr_yr(th_radial_desired, params):
     return th
 
 def undistort_fisheye_newton(image, camera_name, destination_params):
-    """
-    Undistorts a fisheye image to a pinhole image using Newton's method.
-    """
+    """Undistorts a fisheye image to a pinhole image using Newton's method."""
     src_height, src_width = image.shape[:2]
     dest_height, dest_width = destination_params['image_size']
-    undistorted = np.zeros((dest_height, dest_width, image.shape), dtype=image.dtype)
+    
+    # Fix output array creation
+    undistorted = np.zeros((dest_height, dest_width, image.shape[2]), dtype=image.dtype)
 
     # Get camera parameters
     camera_params = get_fisheye624_params(camera_name)
-    fu, fv, cu, cv = camera_params['fx'], camera_params['fy'], camera_params['cx'], camera_params['cy']
-    k0, k1, k2, k3, k4, k5 = camera_params['k0'], camera_params['k1'], camera_params['k2'], camera_params['k3'], camera_params['k4'], camera_params['k5']
-    p0, p1 = camera_params['p0'], camera_params['p1']
-    s0, s1, s2, s3 = camera_params['s0'], camera_params['s1'], camera_params['s2'], camera_params['s3']
-    camera_params_list = [fu, fv, cu, cv, k0, k1, k2, k3, k4, k5, p0, p1, s0, s1, s2, s3]
+    camera_params_list = [
+        camera_params['fx'], camera_params['fy'],
+        camera_params['cx'], camera_params['cy'],
+        camera_params['k0'], camera_params['k1'],
+        camera_params['k2'], camera_params['k3'],
+        camera_params['k4'], camera_params['k5'],
+        camera_params['p0'], camera_params['p1'],
+        camera_params['s0'], camera_params['s1'],
+        camera_params['s2'], camera_params['s3']
+    ]
 
     # Destination camera parameters
     fx_dest, fy_dest = destination_params['focal_length']
     cx_dest, cy_dest = destination_params['principal_point']
 
-    # Iterate over destination image pixels
-    for y_dest in range(dest_height):
-        for x_dest in range(dest_width):
-            # 1. Convert destination pixel to normalized pinhole coordinates
-            x_norm = (x_dest - cx_dest) / fx_dest
-            y_norm = (y_dest - cy_dest) / fy_dest
+    # Precompute coordinates
+    print("Processing pixels...")
+    y_coords, x_coords = np.mgrid[0:dest_height, 0:dest_width]
+    for y_dest, x_dest in zip(y_coords.flatten(), x_coords.flatten()):
+        # Convert to normalized coordinates
+        x_norm = (x_dest - cx_dest) / fx_dest
+        y_norm = (y_dest - cy_dest) / fy_dest
 
-            # 2. Convert to polar coordinates (theta, phi)
-            theta = np.arctan2(np.sqrt(x_norm**2 + y_norm**2), 1)
-            phi = np.arctan2(y_norm, x_norm)
+        # Compute ray direction
+        r = np.sqrt(x_norm*x_norm + y_norm*y_norm)
+        theta = np.arctan(r)
+        phi = np.arctan2(y_norm, x_norm)
 
-            # 3. Use Newton's method to find r_theta from theta
-            r_theta = newton(
-                lambda r: getThetaFromNorm_xr_yr(r, camera_params_list) - theta,
-                theta,  # Initial guess
-            )
-
-            # 4. Convert (r_theta, phi) to distorted (u, v) using the fisheye model
-            u, v = fisheye_rad_tan_thin_prism_project(
-                np.array([r_theta * np.cos(phi), r_theta * np.sin(phi), 1]),
-                camera_params_list
-            )
-
-            # 5. Sample from the source image (with bounds checking)
-            u = int(round(u))
-            v = int(round(v))
-            if 0 <= u < src_width and 0 <= v < src_height:
-                undistorted[y_dest, x_dest] = image[v, u]
+        try:
+            # Project to fisheye coordinates
+            point3d = np.array([
+                np.sin(theta) * np.cos(phi),
+                np.sin(theta) * np.sin(phi),
+                np.cos(theta)
+            ])
+            
+            u, v = fisheye_rad_tan_thin_prism_project(point3d, camera_params_list)
+            
+            if u is not None and v is not None:
+                u = int(round(u))
+                v = int(round(v))
+                if 0 <= u < src_width and 0 <= v < src_height:
+                    undistorted[y_dest, x_dest] = image[v, u]
+                    
+        except (ValueError, RuntimeError) as e:
+            continue
 
     return undistorted
 
