@@ -313,9 +313,14 @@ if __name__ == "__main__":
     
     """
     # Test the undistortion
-    path = "/home/shashank/Documents/UniBonn/Sem5/aria-stereo-depth-completion/other_projects/dust3r/logs/test1/slam_right_image.png"
+    path = "/home/shashank/Documents/UniBonn/Sem5/aria-stereo-depth-completion/data/preprocessed_adt_data/Apartment_release_clean_seq131_M1292/images/R/image_R_0000.png"
     image = cv2.imread(path)
     
+    # If the image is in lanscape - convert to portrait by rotating clockwise
+    if image.shape[0] < image.shape[1]:
+        print("image rotated")
+        image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+
 
 
     destination_height = 640
@@ -328,7 +333,7 @@ if __name__ == "__main__":
     source_params = get_fisheye624_params("camera-slam-left")
     print(f"Source parameters: {source_params}")
 
-    f_scale_factor = 350/source_params["fx"]  # Adjust focal length to match the output size
+    f_scale_factor = 325/source_params["fx"]  # Adjust focal length to match the output size
     destination_fx, destination_fy = f_scale_factor * source_params['fx'], f_scale_factor * source_params['fy']
 
 
@@ -350,35 +355,41 @@ if __name__ == "__main__":
     undistorted = undistort_fisheye624(image, "camera-slam-left", destination_params, 
                                       batch_size=4096, device=device)
 
-
     
+    save_path = f"/home/shashank/Documents/UniBonn/Sem5/aria-stereo-depth-completion/other_projects/dust3r/logs/test0000"
+    if not os.path.exists(path):
+        os.makedirs(path)
+    name_tag = save_path.split("/")[-1].split(".")[0]
+    cv2.imwrite(f"{save_path}/right_original_{name_tag}.png", image)
+
     # Convert principal points to integers for OpenCV
     source_cx = int(round(source_params['cx']))
     source_cy = int(round(source_params['cy']))
     dest_cx = int(round(destination_params['principal_point'][0]))
     dest_cy = int(round(destination_params['principal_point'][1]))
     
-    # Draw circles at principal points
-    cv2.circle(image, (source_cx, source_cy), 5, (0, 255, 0), -1)
-    cv2.circle(undistorted, (dest_cx, dest_cy), 5, (0, 255, 0), -1)
+    # # Draw circles at principal points
+    # cv2.circle(image, (source_cx, source_cy), 5, (0, 255, 0), -1)
+    # cv2.circle(undistorted, (dest_cx, dest_cy), 5, (0, 255, 0), -1)
     
-    # Add some visual guides
-    # Draw horizontal and vertical lines through principal points
-    cv2.line(image, (0, source_cy), (image_width, source_cy), (0, 255, 0), 1)
-    cv2.line(image, (source_cx, 0), (source_cx, image_height), (0, 255, 0), 1)
+    # # Add some visual guides
+    # # Draw horizontal and vertical lines through principal points
+    # cv2.line(image, (0, source_cy), (image_width, source_cy), (0, 255, 0), 1)
+    # cv2.line(image, (source_cx, 0), (source_cx, image_height), (0, 255, 0), 1)
     
-    cv2.line(undistorted, (0, dest_cy), (destination_width, dest_cy), (0, 255, 0), 1)
-    cv2.line(undistorted, (dest_cx, 0), (dest_cx, destination_height), (0, 255, 0), 1)
+    # cv2.line(undistorted, (0, dest_cy), (destination_width, dest_cy), (0, 255, 0), 1)
+    # cv2.line(undistorted, (dest_cx, 0), (dest_cx, destination_height), (0, 255, 0), 1)
     
     # Rest of the display code
     cv2.imshow("Original", image)
     cv2.imshow("Undistorted", undistorted)
     
     # SAVE THE UNDISTORTED IMAGE _ USE NAME FROM THE IMAGE FILE - include logs/*/*
-    name_tag = path.split("/")[-1].split(".")[0]
+    
     # cv2.imwrite(f"/home/shashank/Documents/UniBonn/Sem5/aria-stereo-depth-completion/other_projects/dust3r/logs/test2/undistorted_{name_tag}.png", undistorted)
-    cv2.imwrite(f"/home/shashank/Documents/UniBonn/Sem5/aria-stereo-depth-completion/other_projects/dust3r/logs/test1/testundistorted_{name_tag}.png", undistorted)
+    print("saved image")
+    # create path if not exists
+
+    cv2.imwrite(f"{save_path}/right_undistorted_{name_tag}.png", undistorted)
+    # Save Original Image as well 
     cv2.waitKey(0)
-    cv2.destroyAllWindows()
-
-
