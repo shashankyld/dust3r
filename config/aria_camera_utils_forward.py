@@ -156,8 +156,8 @@ def undistort_fisheye624(image, camera_name, destination_params, batch_size=1024
     print("Source parameters: ", fx, fy, cx, cy, k_params, p0, p1, s0, s1, s2, s3)
     print("Destination parameters: ", fx_dest, fy_dest, cx_dest, cy_dest)
 
-    if True: 
-        return undistorted
+    # if True: 
+    #     return undistorted
     
     # Adjust focal lengths to account for fisheye FOV
     # Fisheye cameras typically have ~180-degree FOV, while pinhole projection works best with narrower FOV
@@ -318,20 +318,23 @@ if __name__ == "__main__":
     
 
 
-    destination_height = 640*2
-    destination_width = 480*2
+    destination_height = 640
+    destination_width = 480
 
     # Adjust destination parameters to avoid border artifacts
     image_height, image_width = image.shape[:2]
     print("Height and width of the original image: ", image_height, image_width)
     scale_factor = 1  # Reduce output size to avoid edge artifacts
-    
     source_params = get_fisheye624_params("camera-slam-left")
     print(f"Source parameters: {source_params}")
 
+    f_scale_factor = 350/source_params["fx"]  # Adjust focal length to match the output size
+    destination_fx, destination_fy = f_scale_factor * source_params['fx'], f_scale_factor * source_params['fy']
+
+
     # SETTING SAME FOCAL LENGTH AS THE SOURCE IMAGE FOR SIMPLE MATH
     destination_params = {
-        'focal_length': [source_params['fx'], source_params['fy']],
+        'focal_length': [destination_fx, destination_fy],
         'principal_point': [destination_width // 2, destination_height // 2],
         'image_size': [
             int(destination_height * scale_factor),
